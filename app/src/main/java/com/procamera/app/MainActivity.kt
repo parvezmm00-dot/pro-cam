@@ -1,74 +1,171 @@
-<?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout 
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#000000">
 
-    <androidx.camera.view.PreviewView
-        android:id="@+id/previewView"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/bottomControls"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+package com.procamera.app
 
-    <!-- Filter buttons -->
-    <HorizontalScrollView
-        android:id="@+id/filterScroll"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:scrollbars="none"
-        android:padding="8dp"
-        app:layout_constraintBottom_toTopOf="@id/bottomControls"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+import android.Manifest
+import android.content.ContentValues
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.provider.MediaStore
+import android.util.Log
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import com.procamera.app.databinding.ActivityMainBinding
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
-        <LinearLayout
-            android:id="@+id/filterContainer"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
+class MainActivity : AppCompatActivity() {
 
-            <Button android:id="@+id/btnNatural" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Natural" android:layout_marginEnd="8dp" android:textSize="12sp"/>
-            <Button android:id="@+id/btnVivid" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Vivid" android:layout_marginEnd="8dp" android:textSize="12sp"/>
-            <Button android:id="@+id/btnWarm" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Warm" android:layout_marginEnd="8dp" android:textSize="12sp"/>
-            <Button android:id="@+id/btnCool" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Cool" android:layout_marginEnd="8dp" android:textSize="12sp"/>
-            <Button android:id="@+id/btnContrast" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Contrast" android:textSize="12sp"/>
+    private lateinit var binding: ActivityMainBinding
+    private var imageCapture: ImageCapture? = null
+    private lateinit var cameraExecutor: ExecutorService
+    private var lensFacing = CameraSelector.LENS_FACING_BACK
+    private var currentFilter = "Natural"
 
-        </LinearLayout>
-    </HorizontalScrollView>
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-    <!-- Bottom controls -->
-    <LinearLayout
-        android:id="@+id/bottomControls"
-        android:layout_width="0dp"
-        android:layout_height="110dp"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:background="#E6000000"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        if (allPermissionsGranted()) {
+            startCamera()
+        } else {
+            ActivityCompat.requestPermissions(
+                this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS
+            )
+        }
 
-        <Button
-            android:id="@+id/btnSwitch"
-            android:layout_width="70dp"
-            android:layout_height="70dp"
-            android:text="⇄"
-            android:textSize="22sp"
-            android:layout_marginEnd="40dp"/>
+        binding.btnCapture.setOnClickListener { takePhoto() }
+        binding.btnSwitch.setOnClickListener { switchCamera() }
 
-        <Button
-            android:id="@+id/btnCapture"
-            android:layout_width="80dp"
-            android:layout_height="80dp"
-            android:text="●"
-            android:textSize="28sp"
-            android:backgroundTint="#FFFFFF"/>
+        // Filter buttons
+        binding.btnNatural.setOnClickListener { setFilter("Natural") }
+        binding.btnVivid.setOnClickListener { setFilter("Vivid") }
+        binding.btnWarm.setOnClickListener { setFilter("Warm") }
+        binding.btnCool.setOnClickListener { setFilter("Cool") }
+        binding.btnContrast.setOnClickListener { setFilter("Contrast") }
 
-    </LinearLayout>
+        cameraExecutor = Executors.newSingleThreadExecutor()
+    }
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+    private fun setFilter(filter: String) {
+        currentFilter = filter
+        Toast.makeText(this, "Filter: $filter", Toast.LENGTH_SHORT).show()
+        // পরের ধাপে এখানে আসল কালার প্রসেসিং যোগ করব
+    }
+
+    private fun startCamera() {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+
+            val preview = Preview.Builder().build().also {
+                it.surfaceProvider = binding.previewView.surfaceProvider
+            }
+
+            imageCapture = ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                .build()
+
+            val cameraSelector = CameraSelector.Builder()
+                .requireLensFacing(lensFacing)
+                .build()
+
+            try {
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(
+                    this, cameraSelector, preview, imageCapture
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Camera binding failed", e)
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun takePhoto() {
+        val imageCapture = imageCapture ?: return
+
+        val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US)
+            .format(System.currentTimeMillis()) + "_$currentFilter"
+
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ProCamera")
+            }
+        }
+
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(
+            contentResolver,
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            contentValues
+        ).build()
+
+        imageCapture.takePicture(
+            outputOptions,
+            ContextCompat.getMainExecutor(this),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    Toast.makeText(baseContext, "ছবি সেভ হয়েছে ($currentFilter)", Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onError(exc: ImageCaptureException) {
+                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
+                    Toast.makeText(baseContext, "ছবি তোলা যায়নি", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
+    private fun switchCamera() {
+        lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+            CameraSelector.LENS_FACING_FRONT
+        } else {
+            CameraSelector.LENS_FACING_BACK
+        }
+        startCamera()
+    }
+
+    private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
+        ContextCompat.checkSelfPermission(baseContext, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CODE_PERMISSIONS) {
+            if (allPermissionsGranted()) {
+                startCamera()
+            } else {
+                Toast.makeText(this, "ক্যামেরা পারমিশন দরকার", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        cameraExecutor.shutdown()
+    }
+
+    companion object {
+        private const val TAG = "ProCamera"
+        private const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
+        private const val REQUEST_CODE_PERMISSIONS = 10
+        private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
+    }
+}
